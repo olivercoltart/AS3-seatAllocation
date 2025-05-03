@@ -11,7 +11,7 @@ async function main() {
         : ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
 
     for (let seat of seatLabels) {
-      const seatId = `${seat}${row}`;
+      const seatId = `${row}${seat}`;
       await prisma.seat.upsert({
         where: { id: seatId },
         update: {},
