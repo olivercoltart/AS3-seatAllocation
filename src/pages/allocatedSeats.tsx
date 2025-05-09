@@ -80,11 +80,13 @@ const AllocatedSeats = () => {
             ))}
       </div>
 
-      {renderGrid()}
-      <div className="mt-6 space-y-1">
-        <p><span className="inline-block w-4 h-4 bg-blue-500 mr-2 rounded"></span>Your Seats</p>
-        <p><span className="inline-block w-4 h-4 bg-red-400 mr-2 rounded"></span>Booked</p>
-        <p><span className="inline-block w-4 h-4 bg-green-300 mr-2 rounded"></span>Available</p>
+      <div className='flex'>
+        <div>{renderGrid()}</div>
+        <div className="ml-12 mt-6 space-y-1">
+          <p><span className="inline-block w-4 h-4 bg-blue-500 mr-2 rounded"></span>Your Seats</p>
+          <p><span className="inline-block w-4 h-4 bg-red-400 mr-2 rounded"></span>Booked</p>
+          <p><span className="inline-block w-4 h-4 bg-green-300 mr-2 rounded"></span>Available</p>
+        </div>
       </div>
     </div>
   );
