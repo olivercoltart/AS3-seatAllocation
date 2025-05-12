@@ -75,21 +75,38 @@ function findPreferredSeat(seats: Seat[], category: string): Seat {
 function isGroupBlockValid(
   group: Seat[],
   hasUnder10: boolean,
-  hasDisabled: boolean
+  hasDisabled: boolean,
+  rowSeats: Seat[]
 ): boolean {
-  const rows = group.map(s => s.row);
-  const row = rows[0];
-  
+  if (group.length === 0) return false;
+
+  const row = group[0].row;
   const hasBlockedRow = UNDER10_BLOCKED_ROWS.includes(row);
   const includesDisabledSeat = group.some(s => DISABLED_SEATS.includes(s.id));
   const isConsecutive = group.every((s, idx) =>
     idx === 0 || s.number === group[idx - 1].number + 1
   );
 
+  // Get seat numbers
+  const start = group[0].number;
+  const end = group[group.length - 1].number;
+
+  const seatBefore = rowSeats.find(s => s.number === start - 1);
+  const seatAfter = rowSeats.find(s => s.number === end + 1);
+
+  const createsBadGap = (seat: Seat | undefined) => {
+    if (!seat) return false; // No seat = no problem
+    const col = seat.id.slice(-1);
+    return !AISLE_COLUMNS.includes(col) && !STANDARD_WINDOW_COLUMNS.includes(col);
+  };
+
+  const leavesBadGap = createsBadGap(seatBefore) || createsBadGap(seatAfter);
+
   return (
     isConsecutive &&
     (!hasUnder10 || !hasBlockedRow) &&
-    (!hasDisabled || includesDisabledSeat)
+    (!hasDisabled || includesDisabledSeat) &&
+    !leavesBadGap
   );
 }
 
@@ -115,85 +132,80 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     orderBy: [{ row: 'asc' }, { number: 'asc' }],
   });
 
-  if (isSingle) {
-    const category = passengerCategories[0];
-    let filtered: Seat[] = [];
+  // Step 1: Handle VIPs together
+  const vipCount = passengerCategories.filter(c => c === 'VIP').length;
+  const nonVipCategories = passengerCategories.filter(c => c !== 'VIP');
 
-    if (category === 'VIP') {
-      filtered = availableSeats.filter(s => VIP_ROWS.includes(s.row));
-      const preferred = filtered.find(s => {
-        const col = s.id[s.id.length - 1];
-        return VIP_WINDOW_COLUMNS.includes(col) || AISLE_COLUMNS.includes(col);
-      });
-      const seat = preferred || filtered[0];
-      if (!seat) return res.status(400).json({ error: 'No VIP seats available' });
-      assignedSeats.push(seat.id);
-      await prisma.seat.update({ where: { id: seat.id }, data: { booked: true } });
+  if (vipCount > 0) {
+    const vipSeats = filterSeats(availableSeats, 'VIP');
+    const groupedVIP = groupSeatsByRow(vipSeats);
+    const vipGroup = findGroupSeats(vipCount, groupedVIP);
 
-    } else if (category === 'Standard') {
-      filtered = availableSeats.filter(s =>
-        !VIP_ROWS.includes(s.row) && !DISABLED_SEATS.includes(s.id)
-      );
-      const preferred = filtered.find(s => {
-        const col = s.id[s.id.length - 1];
-        return STANDARD_WINDOW_COLUMNS.includes(col) || AISLE_COLUMNS.includes(col);
-      });
-      const seat = preferred || filtered[0];
-      if (!seat) return res.status(400).json({ error: 'No Standard seats available' });
-      assignedSeats.push(seat.id);
-      await prisma.seat.update({ where: { id: seat.id }, data: { booked: true } });
+    if (!vipGroup || vipGroup.length < vipCount) {
+      return res.status(400).json({ error: 'Not enough adjacent VIP seats' });
+    }
 
-    } else if (category === 'Under 10') {
-      filtered = availableSeats.filter(s =>
-        !VIP_ROWS.includes(s.row) &&
-        !DISABLED_SEATS.includes(s.id) &&
-        !UNDER10_BLOCKED_ROWS.includes(s.row)
-      );
-      const seat = filtered[0];
-      if (!seat) return res.status(400).json({ error: 'No Under 10 seats available' });
-      assignedSeats.push(seat.id);
-      await prisma.seat.update({ where: { id: seat.id }, data: { booked: true } });
-
-    } else if (category === 'Disabled') {
-      filtered = availableSeats.filter(s => DISABLED_SEATS.includes(s.id));
-      const seat = filtered[0];
-      if (!seat) return res.status(400).json({ error: 'No Disabled seats available' });
+    for (const seat of vipGroup.slice(0, vipCount)) {
       assignedSeats.push(seat.id);
       await prisma.seat.update({ where: { id: seat.id }, data: { booked: true } });
     }
 
-    return res.status(200).json({ success: true, assignedSeats });
-  }
-
-  const isAllVIP = passengerCategories.every(c => c === 'VIP');
-
-  // Group booking logic
-  const eligibleSeats = availableSeats.filter(s => {
-    if (isAllVIP) return VIP_ROWS.includes(s.row); 
-    return !VIP_ROWS.includes(s.row);              
-  });
-  
-  const grouped = groupSeatsByRow(eligibleSeats);
-  let foundGroup: Seat[] | null = null;
-
-  for (const seats of grouped.values()) {
-    for (let i = 0; i <= seats.length - groupSize; i++) {
-      const group = seats.slice(i, i + groupSize);
-      if (isGroupBlockValid(group, hasUnder10, hasDisabled)) {
-        foundGroup = group;
-        break;
+    // Remove VIP-assigned seats from available pool
+    const vipSeatIds = new Set(vipGroup.map(s => s.id));
+    for (let i = availableSeats.length - 1; i >= 0; i--) {
+      if (vipSeatIds.has(availableSeats[i].id)) {
+        availableSeats.splice(i, 1);
       }
     }
-    if (foundGroup) break;
   }
 
-  if (!foundGroup) {
-    return res.status(400).json({ error: 'No valid group seating available for these categories' });
-  }
+  // Step 2: Try to seat non-VIP passengers together
+  if (nonVipCategories.length > 0) {
+    const filteredSeats = availableSeats.filter(s =>
+      !VIP_ROWS.includes(s.row)
+    );
 
-  for (const seat of foundGroup) {
-    assignedSeats.push(seat.id);
-    await prisma.seat.update({ where: { id: seat.id }, data: { booked: true } });
+    const grouped = groupSeatsByRow(filteredSeats);
+    let foundGroup: Seat[] | null = null;
+
+    for (const seats of grouped.values()) {
+      for (let i = 0; i <= seats.length - nonVipCategories.length; i++) {
+        const group = seats.slice(i, i + nonVipCategories.length);
+        if (isGroupBlockValid(group, hasUnder10, hasDisabled, seats)) {
+          foundGroup = group;
+          break;
+        }
+      }
+      if (foundGroup) break;
+    }
+
+    if (foundGroup) {
+      for (let i = 0; i < nonVipCategories.length; i++) {
+        const category = nonVipCategories[i];
+        const seat = foundGroup[i];
+        assignedSeats.push(seat.id);
+        await prisma.seat.update({ where: { id: seat.id }, data: { booked: true } });
+      }
+
+      return res.status(200).json({ success: true, assignedSeats });
+    }
+
+    // Step 3: Couldn’t group — assign individually
+    for (const category of nonVipCategories) {
+      const filtered = filterSeats(availableSeats, category);
+      const seat = findPreferredSeat(filtered, category);
+
+      if (!seat) {
+        return res.status(400).json({ error: `No available seats for ${category}` });
+      }
+
+      assignedSeats.push(seat.id);
+      await prisma.seat.update({ where: { id: seat.id }, data: { booked: true } });
+
+      // Remove from pool
+      const idx = availableSeats.findIndex(s => s.id === seat.id);
+      if (idx !== -1) availableSeats.splice(idx, 1);
+    }
   }
 
   return res.status(200).json({ success: true, assignedSeats });
