@@ -1,5 +1,4 @@
 import Image from "next/image";
-import { Geist, Geist_Mono } from "next/font/google";
 import Link from "next/link";
 
 export default function Home() {
@@ -25,7 +24,7 @@ export default function Home() {
           </div>
 
           <div>
-            <Link href="" className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition">
+            <Link href="/viewBookedSeats" className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition">
               View Bookings
             </Link>
           </div>
