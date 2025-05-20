@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 
+
 type Seat = {
   id: string;
   row: number;
@@ -12,6 +13,8 @@ const DISABLED_SEATS = ['4E', '6E', '5D', '7D'];
 
 const ViewBookings = () => {
   const [allSeats, setAllSeats] = useState<Seat[]>([]);
+  const [overrideMode, setOverrideMode] = useState(false);
+  const [selectedSeats, setSelectedSeats] = useState<Seat[]>([]);
 
   useEffect(() => {
     const fetchSeats = async () => {
@@ -40,6 +43,43 @@ const ViewBookings = () => {
               return (
                 <div
                   key={seat.id}
+                  onClick={async() => {
+                    if (!overrideMode) return;
+
+                    if (selectedSeats.length === 0) {
+                      setSelectedSeats([seat]);
+                    } else if (selectedSeats.length === 1 && selectedSeats[0].id !== seat.id) {
+                      const firstSeat = selectedSeats[0];
+                      const secondSeat = seat;
+
+                      const updatedSeats = allSeats.map(s => {
+                        if (s.id === firstSeat.id) return { ...s, booked: secondSeat.booked };
+                        if (s.id === secondSeat.id) return { ...s, booked: firstSeat.booked };
+                        return s;
+                      });
+
+                      setAllSeats(updatedSeats);
+                      setSelectedSeats([]); // reset selected seats once swapped 
+                      
+                      await fetch('/api/adminOverride', {
+                        method: 'POST',
+                        headers: {
+                          'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                        type: 'swap',
+                        seats: [
+                          { id: firstSeat.id, booked: secondSeat.booked },
+                          { id: secondSeat.id, booked: firstSeat.booked },
+                        ],
+                      }),
+                    });
+                   }
+                  }}
+                  style={{
+                    cursor: overrideMode ? 'pointer' : 'default',
+                    border: selectedSeats.some(s => s.id === seat.id) ? '2px solid yellow' : 'none',
+                  }}
                   className={`relative w-10 h-10 ${seat.id.endsWith('E') ? 'ml-10' : 'm-1'} m-1 flex items-center justify-center rounded text-sm text-white font-medium ${bgColor}`}
                   title={seat.id}
                 >
@@ -105,9 +145,20 @@ const ViewBookings = () => {
 
         {/* Legend */}
         <div className="ml-12 mt-6 space-y-1">
-          <p><span className="inline-block w-4 h-4 bg-red-400 mr-2 rounded"></span>Booked</p>
+          <p><span className="inline-block w-4 h-4 bg-red-400 mr-2 rounded"></span>Booked</p> 
           <p><span className="inline-block w-4 h-4 bg-green-300 mr-2 rounded"></span>Available</p>
         </div>
+      </div>
+      <div className="iniline-block ml-190 mt-6 space-y-1">
+          <button 
+              onClick={() => {
+                setOverrideMode(!overrideMode);
+                setSelectedSeats([]);  
+              }} 
+              className={`px-4 py-2 rounded text-white transition ${overrideMode ? 'bg-gray-500 hover:bg-gray-700' : 'bg-red-400 hover:bg-red-700'}`}
+            > 
+              {overrideMode ? 'Exit Admin Override' : 'Admin Override'}
+          </button>
       </div>
     </div>
   );

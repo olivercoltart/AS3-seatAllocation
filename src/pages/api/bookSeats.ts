@@ -208,5 +208,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
   }
 
-  return res.status(200).json({ success: true, assignedSeats });
+  const updatedSeatMap = await prisma.seat.findMany({
+    orderBy: [{ row: 'asc' }, { number: 'asc' }],
+  });
+
+  return res.status(200).json({ success: true, assignedSeats, seatMap: updatedSeatMap });
 }
